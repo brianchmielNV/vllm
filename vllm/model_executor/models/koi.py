@@ -112,7 +112,8 @@ class KoiLoopConditioner(nn.Module):
         )
 
     def forward(self, progress: float, budget: float) -> torch.Tensor:
-        weight = self.mlp[0].weight
+        # Bias retains the activation dtype when the matrix is stored as MXFP8.
+        weight = self.mlp[0].bias
         return self.mlp(
             torch.cat(
                 [
@@ -379,6 +380,14 @@ class KoiForCausalLM(nn.Module, HasInnerState, IsHybrid):
         if config.tie_word_embeddings:
             self.lm_head = self.lm_head.tie_weights(self.model.embed_tokens)
         self.logits_processor = LogitsProcessor(config.vocab_size)
+        if getattr(config, "koi_mixed", None):
+            from .koi_mixed import install_packed_weights
+
+            install_packed_weights(self, vllm_config)
+        elif getattr(config, "koi_mxfp8", None):
+            from .koi_mxfp8 import install_packed_weights
+
+            install_packed_weights(self, vllm_config)
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.model.embed_tokens(input_ids)
@@ -425,6 +434,14 @@ class KoiForCausalLM(nn.Module, HasInnerState, IsHybrid):
         return MambaStateCopyFuncCalculator.gated_delta_net_state_copy_func()
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        if getattr(self.config, "koi_mixed", None):
+            from .koi_mixed import load_packed_weights
+
+            return load_packed_weights(self, weights)
+        if getattr(self.config, "koi_mxfp8", None):
+            from .koi_mxfp8 import load_packed_weights
+
+            return load_packed_weights(self, weights)
         params = dict(self.named_parameters())
         loaded = set()
         for name, weight in weights:

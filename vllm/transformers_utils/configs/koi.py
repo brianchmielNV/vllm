@@ -38,6 +38,8 @@ class KoiConfig(PreTrainedConfig):
     rms_norm_eps: float = 1e-5
     max_position_embeddings: int = 262144
     tie_word_embeddings: bool = False
+    koi_mxfp8: dict | None = None
+    koi_mixed: dict | None = None
     bos_token_id: int | None = 1
     eos_token_id: int | list[int] | None = 11
     pad_token_id: int | None = 11

@@ -45,6 +45,16 @@ def test_koi_accepts_hf_special_token_types():
     assert config.pad_token_id is None
 
 
+@pytest.mark.parametrize("field", ["koi_mxfp8", "koi_mixed"])
+def test_koi_packed_metadata_roundtrip(tmp_path, field):
+    marker = {"version": 1, "activations": "bfloat16"}
+    config = KoiConfig(**{field: marker})
+    config.save_pretrained(tmp_path)
+    restored = get_config(tmp_path, trust_remote_code=False)
+    assert getattr(restored, field) == marker
+    assert getattr(KoiConfig(), field) is None
+
+
 @pytest.mark.parametrize(
     "overrides,match",
     [
