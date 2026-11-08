@@ -3,39 +3,10 @@
 """Packed NVFP4 FFNs/MXFP8 head through built-in Marlin W4A16/W8A16."""
 
 import torch
-from torch import nn
 
-from vllm.model_executor.kernels.linear.nvfp4 import NvFp4LinearLayerConfig
-from vllm.model_executor.kernels.linear.nvfp4.marlin import MarlinNvFp4LinearKernel
-from vllm.model_executor.layers.linear import LinearMethodBase
-
-from .koi_mxfp8 import KoiMxFp8Method
 from .koi_mxfp8 import install_packed_weights as install_mxfp8
-
-
-class KoiNvFp4Method(LinearMethodBase):
-    def __init__(self):
-        self.kernel = MarlinNvFp4LinearKernel(NvFp4LinearLayerConfig())
-
-    def create_weights(self, *args, **kwargs):
-        raise RuntimeError("Mixed Koi weights are installed before loading")
-
-    def process_weights_after_loading(self, layer):
-        assert layer.weight.dtype == torch.uint8
-        layer.output_size_per_partition = layer.weight.shape[0]
-        layer.input_size_per_partition = layer.weight.shape[1] * 2
-        layer.params_dtype = torch.bfloat16
-        layer.register_parameter(
-            "weight_global_scale", layer._parameters.pop("weight_scale_2")
-        )
-        self.kernel.process_weights_after_loading(layer)
-        assert layer.weight.dtype == torch.int32
-        assert self.kernel.input_quant_key() is None
-
-    def apply(self, layer, x, bias=None):
-        if x.dtype != torch.bfloat16:
-            raise ValueError("W4A16 requires BF16 activations")
-        return self.kernel.apply_weights(layer, x, bias)
+from .koi_packed import KoiNvFp4Method as KoiNvFp4Method
+from .koi_packed import install_packed_linear
 
 
 def install_packed_weights(model, vllm_config):
@@ -71,49 +42,12 @@ def install_packed_weights(model, vllm_config):
             continue
         for role in ("up_proj", "down_proj"):
             module = getattr(layer.mixer, role)
-            n, k = module.weight.shape
-            module.weight.requires_grad_(False)
-            module.weight.data = torch.empty(
-                n, k // 2, device=module.weight.device, dtype=torch.uint8
-            )
-            module.register_parameter(
-                "weight_scale",
-                nn.Parameter(
-                    torch.empty(
-                        n,
-                        k // 16,
-                        device=module.weight.device,
-                        dtype=torch.float8_e4m3fn,
-                    ),
-                    requires_grad=False,
-                ),
-            )
-            module.register_parameter(
-                "weight_scale_2",
-                nn.Parameter(
-                    torch.empty((), device=module.weight.device, dtype=torch.float32),
-                    requires_grad=False,
-                ),
-            )
-            module.quant_method = KoiNvFp4Method()
+            install_packed_linear(module, "NVFP4")
             count += 1
     assert count == 2 * model.config.layer_types.count("mlp")
     if full_body:
         return
-    head = model.lm_head
-    n, k = head.weight.shape
-    head.weight.requires_grad_(False)
-    head.weight.data = torch.empty(
-        n, k, device=head.weight.device, dtype=torch.float8_e4m3fn
-    )
-    head.register_parameter(
-        "weight_scale",
-        nn.Parameter(
-            torch.empty(n, k // 32, device=head.weight.device, dtype=torch.uint8),
-            requires_grad=False,
-        ),
-    )
-    head.quant_method = KoiMxFp8Method((n, k))
+    install_packed_linear(model.lm_head, "MXFP8")
 
 
 def load_packed_weights(model, weights):

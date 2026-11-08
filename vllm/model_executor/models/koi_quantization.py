@@ -13,6 +13,8 @@ from vllm.model_executor.layers.linear import LinearBase
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.transformers_utils.repo_utils import get_hf_file_to_dict
 
+from .koi_packed import PACKED_FORMATS, install_packed_linear
+
 
 class SplitProjection(nn.Module):
     def __init__(self, roles, sizes, k, device):
@@ -50,7 +52,7 @@ def mapped_name(model, name):
 def resolve_formats(allocation, parameter_names, matrix_names):
     default = allocation.get("default", "BF16")
     overrides = allocation.get("formats", {})
-    supported = {"BF16", "MXFP8", "NVFP4"}
+    supported = {"BF16", *PACKED_FORMATS}
     if not isinstance(overrides, dict):
         raise ValueError("Koi formats must map parameter names to precisions")
     if default not in supported or any(
@@ -70,9 +72,6 @@ def resolve_formats(allocation, parameter_names, matrix_names):
 
 
 def install_packed_weights(model, vllm_config):
-    from .koi_mixed import KoiNvFp4Method
-    from .koi_mxfp8 import KoiMxFp8Method, KoiMxFp8TorchLinear
-
     marker = getattr(model.config, "koi_quantization", None)
     legacy = marker is None
     if legacy:
@@ -154,34 +153,9 @@ def install_packed_weights(model, vllm_config):
         if not name.endswith(".weight") or params[target].ndim != 2:
             raise ValueError(f"Only matrix weights may be quantized: {name}")
         module = modules[target.rsplit(".", 1)[0]]
-        w = module.weight
         if not isinstance(module, (nn.Linear, LinearBase, ParallelLMHead)):
             raise TypeError(f"Unsupported matrix module {name}: {type(module)}")
-        n, k = w.shape
-        block_size = 32 if fmt == "MXFP8" else 16
-        if k % block_size:
-            raise ValueError(f"{fmt} block size does not divide {name}")
-        w.requires_grad_(False)
-        if fmt == "MXFP8":
-            w.data = torch.empty(n, k, dtype=torch.float8_e4m3fn, device=w.device)
-            scale = torch.empty(n, k // 32, dtype=torch.uint8, device=w.device)
-            module.quant_method = KoiMxFp8Method((n, k))
-        else:
-            w.data = torch.empty(n, k // 2, dtype=torch.uint8, device=w.device)
-            scale = torch.empty(n, k // 16, dtype=torch.float8_e4m3fn, device=w.device)
-            module.register_parameter(
-                "weight_scale_2",
-                nn.Parameter(
-                    torch.empty((), device=w.device, dtype=torch.float32),
-                    requires_grad=False,
-                ),
-            )
-            module.quant_method = KoiNvFp4Method()
-        module.register_parameter(
-            "weight_scale", nn.Parameter(scale, requires_grad=False)
-        )
-        if isinstance(module, nn.Linear):
-            module.__class__ = KoiMxFp8TorchLinear
+        install_packed_linear(module, fmt)
 
 
 def load_packed_weights(model, weights):
@@ -201,7 +175,8 @@ def load_packed_weights(model, weights):
         p.data.copy_(value)
         loaded.add(target)
     expected = sum(
-        {"BF16": 1, "MXFP8": 2, "NVFP4": 3}[fmt] for fmt in model._koi_formats.values()
+        1 if fmt == "BF16" else 2 + PACKED_FORMATS[fmt].tensor_scale
+        for fmt in model._koi_formats.values()
     )
     if loaded != set(params) or len(seen) != expected:
         raise ValueError(

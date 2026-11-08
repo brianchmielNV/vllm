@@ -10,39 +10,12 @@ vLLM versions. Convolution, vectors, and embedding remain unquantized.
 import torch
 from torch import nn
 
-from vllm.model_executor.kernels.linear.mxfp8 import Mxfp8LinearLayerConfig
-from vllm.model_executor.kernels.linear.mxfp8.marlin import (
-    MarlinMxfp8LinearKernel,
-)
-from vllm.model_executor.layers.linear import LinearBase, LinearMethodBase
+from vllm.model_executor.layers.linear import LinearBase
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 
-
-class KoiMxFp8Method(LinearMethodBase):
-    def __init__(self, shape):
-        self.kernel = MarlinMxfp8LinearKernel(Mxfp8LinearLayerConfig(shape))
-        self.shape = shape
-
-    def create_weights(self, *args, **kwargs):
-        raise RuntimeError("Koi MXFP8 weights are installed before checkpoint load")
-
-    def process_weights_after_loading(self, layer):
-        layer.output_size_per_partition, layer.input_size_per_partition = self.shape
-        layer.params_dtype = torch.bfloat16
-        self.kernel.process_weights_after_loading(layer)
-        assert layer.weight.dtype == torch.int32
-        assert self.kernel.input_quant_key() is None
-
-    def apply(self, layer, x, bias=None):
-        if x.dtype != torch.bfloat16:
-            raise ValueError("Koi MXFP8 W8A16 requires BF16 activations")
-        return self.kernel.apply_weights(layer, x, bias)
-
-
-class KoiMxFp8TorchLinear(nn.Linear):
-    def forward(self, x):
-        return self.quant_method.apply(self, x, self.bias)
+from .koi_packed import KoiMxFp8Method as KoiMxFp8Method
+from .koi_packed import install_packed_linear
 
 
 def install_packed_weights(model, vllm_config):
@@ -64,22 +37,7 @@ def install_packed_weights(model, vllm_config):
             continue
         if not isinstance(module, (nn.Linear, LinearBase, ParallelLMHead)):
             raise TypeError(f"Unsupported matrix module: {name}: {type(module)}")
-        n, k = w.shape
-        if k % 32:
-            raise ValueError(f"MXFP8 block size does not divide {name}")
-        # Preserve parameter subclass/loader metadata; no BF16 matrix survives.
-        w.requires_grad_(False)
-        w.data = torch.empty((n, k), dtype=torch.float8_e4m3fn, device=w.device)
-        module.register_parameter(
-            "weight_scale",
-            nn.Parameter(
-                torch.empty((n, k // 32), dtype=torch.uint8, device=w.device),
-                requires_grad=False,
-            ),
-        )
-        module.quant_method = KoiMxFp8Method((n, k))
-        if isinstance(module, nn.Linear):
-            module.__class__ = KoiMxFp8TorchLinear
+        install_packed_linear(module, "MXFP8")
 
 
 def load_packed_weights(model, weights):
