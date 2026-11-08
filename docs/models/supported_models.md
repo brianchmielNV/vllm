@@ -432,7 +432,7 @@ th {
 | `JambaForCausalLM` | Jamba | `ai21labs/AI21-Jamba-1.5-Large`, `ai21labs/AI21-Jamba-1.5-Mini`, `ai21labs/Jamba-v0.1`, etc. | ✅︎ | ✅︎ |
 | `K2HorizonForCausalLM` | K2-Horizon | `IFM/K2-Horizon-7B`, `IFM/K2-Horizon-375B` | | ✅︎ |
 | `KimiLinearForCausalLM` | Kimi-Linear-48B-A3B-Base, Kimi-Linear-48B-A3B-Instruct | `moonshotai/Kimi-Linear-48B-A3B-Base`, `moonshotai/Kimi-Linear-48B-A3B-Instruct` | | ✅︎ |
-| `KoiForCausalLM` | [Koi](koi_low_precision.md) | `nvidia/NVIDIA-Nemotron-Labs-Koi-4B-BF16` | | |
+| `KoiForCausalLM` | Koi | `nvidia/NVIDIA-Nemotron-Labs-Koi-4B-BF16`, `nvidia/NVIDIA-Nemotron-Labs-Koi-4B-MXFP8`, `nvidia/NVIDIA-Nemotron-Labs-Koi-4B-NVFP4` | | |
 | `Lfm2ForCausalLM` | LFM2 | `LiquidAI/LFM2-1.2B`, `LiquidAI/LFM2-700M`, `LiquidAI/LFM2-350M`, etc. | ✅︎ | ✅︎ |
 | `Lfm2MoeForCausalLM` | LFM2MoE | `LiquidAI/LFM2-8B-A1B-preview`, etc. | ✅︎ | ✅︎ |
 | `LlamaForCausalLM` | Llama 3.1, Llama 3, Llama 2, LLaMA, Yi | `meta-llama/Meta-Llama-3.1-405B-Instruct`, `meta-llama/Meta-Llama-3.1-70B`, `meta-llama/Meta-Llama-3-70B-Instruct`, `meta-llama/Llama-2-70b-hf`, `01-ai/Yi-34B`, etc. | ✅︎ | ✅︎ |
@@ -506,6 +506,22 @@ Some models are supported only via the [Transformers modeling backend](#transfor
 
 !!! note
     Currently, the ROCm version of vLLM supports Mistral and Mixtral only for context lengths up to 4096.
+
+!!! note "Koi weight-only quantization"
+    The MXFP8 model supports a BF16 or MXFP8 LM head. The NVFP4 model supports
+    both FFN-NVFP4/MXFP8-body and arbitrary per-matrix BF16/MXFP8/NVFP4 allocations.
+    Formats come from checkpoint metadata, not the repository name. Native Marlin
+    serving currently requires NVIDIA CUDA, BF16 activations and TP=PP=1;
+    embeddings, convolution weights and vectors remain unquantized.
+
+    For general allocations, set `koi_quantization` in `config.json` to
+    `{"version":1,"activations":"bfloat16","default":"MXFP8","formats":{"lm_head.weight":"BF16","model.layers.1.mixer.up_proj.weight":"NVFP4"}}`.
+    The default applies to linear matrices; `formats` overrides individual HF
+    parameter names. Alternatively use `"allocation":"precision.json"`, with
+    `default` and `formats` in that JSON file alongside the checkpoint. Weights
+    must already be packed: MXFP8 uses E4M3 weights plus E8M0 block-32 scales;
+    NVFP4 uses packed E2M1 weights, E4M3 block-16 scales and an FP32 tensor scale.
+    Existing `koi_mxfp8` and `koi_mixed` checkpoints remain supported.
 
 ## List of Multimodal Language Models
 

@@ -45,7 +45,7 @@ def test_koi_accepts_hf_special_token_types():
     assert config.pad_token_id is None
 
 
-@pytest.mark.parametrize("field", ["koi_mxfp8", "koi_mixed"])
+@pytest.mark.parametrize("field", ["koi_quantization", "koi_mxfp8", "koi_mixed"])
 def test_koi_packed_metadata_roundtrip(tmp_path, field):
     marker = {"version": 1, "activations": "bfloat16"}
     config = KoiConfig(**{field: marker})

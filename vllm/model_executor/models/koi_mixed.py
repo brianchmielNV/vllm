@@ -41,7 +41,7 @@ class KoiNvFp4Method(LinearMethodBase):
 def install_packed_weights(model, vllm_config):
     recipe = model.config.koi_mixed
     if recipe.get("version") == 2:
-        from .koi_searched import install_packed_weights as install_searched
+        from .koi_quantization import install_packed_weights as install_searched
 
         return install_searched(model, vllm_config)
     full_body = recipe.get("recipe") == "body-mxfp8-ffn-nvfp4"
@@ -118,7 +118,7 @@ def install_packed_weights(model, vllm_config):
 
 def load_packed_weights(model, weights):
     if model.config.koi_mixed.get("version") == 2:
-        from .koi_searched import load_packed_weights as load_searched
+        from .koi_quantization import load_packed_weights as load_searched
 
         return load_searched(model, weights)
     params = dict(model.named_parameters())

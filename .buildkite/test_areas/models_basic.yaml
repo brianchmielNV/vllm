@@ -8,6 +8,7 @@ steps:
   device: h200_18gb
   source_file_dependencies:
   - vllm/model_executor/models/koi*.py
+  - vllm/transformers_utils/configs/koi.py
   - vllm/model_executor/kernels/linear/mxfp8/
   - vllm/model_executor/kernels/linear/nvfp4/
   - tests/models/test_koi.py
@@ -487,6 +488,8 @@ steps:
       models/transformers/test_layer_registry.py
       models/test_dory.py
       models/test_koi.py::test_loop_table_reload_preserves_captured_storage
+      models/test_koi.py::test_per_matrix_formats
+      models/test_koi.py::test_per_matrix_formats_reject_invalid
       transformers_utils/test_koi_config.py
       models/test_alice_ai.py
       models/test_alice_ai_config.py

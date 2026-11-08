@@ -156,3 +156,47 @@ def test_packed_linear(fmt, n, k, batch):
     assert any("marlin_gemm" in event.key for event in p.key_averages())
     with pytest.raises(ValueError, match="BF16 activations"):
         method.apply(layer, x.float(), layer.bias)
+
+
+@pytest.mark.parametrize("default", ["BF16", "MXFP8", "NVFP4"])
+def test_per_matrix_formats(default):
+    from vllm.model_executor.models.koi_quantization import resolve_formats
+
+    matrices = {"projection.weight", "lm_head.weight", "ffn.weight"}
+    names = matrices | {"projection.bias", "model.embed_tokens.weight"}
+    formats = resolve_formats(
+        {
+            "default": default,
+            "formats": {"projection.weight": "NVFP4", "lm_head.weight": "MXFP8"},
+        },
+        names,
+        matrices,
+    )
+    assert formats == {
+        "projection.weight": "NVFP4",
+        "lm_head.weight": "MXFP8",
+        "ffn.weight": default,
+        "projection.bias": "BF16",
+        "model.embed_tokens.weight": "BF16",
+    }
+
+
+@pytest.mark.parametrize(
+    "allocation,match",
+    [
+        ({"formats": {"missing.weight": "BF16"}}, "Unknown Koi parameter"),
+        ({"formats": {"projection.bias": "NVFP4"}}, "Only linear matrix"),
+        ({"formats": {"model.embed_tokens.weight": "MXFP8"}}, "Only linear matrix"),
+        ({"default": "FP8"}, "Unsupported per-matrix"),
+        ({"formats": {"projection.weight": "FP8"}}, "Unsupported per-matrix"),
+    ],
+)
+def test_per_matrix_formats_reject_invalid(allocation, match):
+    from vllm.model_executor.models.koi_quantization import resolve_formats
+
+    with pytest.raises(ValueError, match=match):
+        resolve_formats(
+            allocation,
+            {"projection.weight", "projection.bias", "model.embed_tokens.weight"},
+            {"projection.weight"},
+        )

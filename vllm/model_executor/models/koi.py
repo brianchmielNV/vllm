@@ -90,35 +90,37 @@ class KoiAttention(nn.Module):
         return output
 
 
-def _sinusoidal_embedding(value: float, dim: int, like: torch.Tensor) -> torch.Tensor:
+def _sinusoidal_embedding(
+    value: float, dim: int, device: torch.device, dtype: torch.dtype
+) -> torch.Tensor:
     half = dim // 2
     freqs = torch.exp(
-        -math.log(100.0)
-        * torch.arange(half, device=like.device, dtype=torch.float32)
-        / half
+        -math.log(100.0) * torch.arange(half, device=device, dtype=torch.float32) / half
     )
     args = value * freqs * 100.0
-    return torch.cat([torch.cos(args), torch.sin(args)]).to(like.dtype)
+    return torch.cat([torch.cos(args), torch.sin(args)]).to(dtype)
 
 
 class KoiLoopConditioner(nn.Module):
     """``(progress, budget) -> c``: sinusoidal embeddings, Linear, SiLU, Linear."""
 
-    def __init__(self, cond_dim: int) -> None:
+    def __init__(self, cond_dim: int, dtype: torch.dtype) -> None:
         super().__init__()
         self.cond_dim = cond_dim
+        self.dtype = dtype
         self.mlp = nn.Sequential(
-            nn.Linear(2 * cond_dim, cond_dim), nn.SiLU(), nn.Linear(cond_dim, cond_dim)
+            nn.Linear(2 * cond_dim, cond_dim, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(cond_dim, cond_dim, dtype=dtype),
         )
 
     def forward(self, progress: float, budget: float) -> torch.Tensor:
-        # Bias retains the activation dtype when the matrix is stored as MXFP8.
-        weight = self.mlp[0].bias
+        device = self.mlp[0].weight.device
         return self.mlp(
             torch.cat(
                 [
-                    _sinusoidal_embedding(progress, self.cond_dim, weight),
-                    _sinusoidal_embedding(budget, self.cond_dim, weight),
+                    _sinusoidal_embedding(progress, self.cond_dim, device, self.dtype),
+                    _sinusoidal_embedding(budget, self.cond_dim, device, self.dtype),
                 ]
             )
         )
@@ -310,7 +312,9 @@ class KoiModel(nn.Module):
             ]
         )
         self.norm_f = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.loop_conditioner = KoiLoopConditioner(config.loop_conditioning_hidden_size)
+        self.loop_conditioner = KoiLoopConditioner(
+            config.loop_conditioning_hidden_size, vllm_config.model_config.dtype
+        )
         self.loop_seam = KoiLoopSeam(config)
         self.state_update = KoiStateUpdate(config, f"{prefix}.state_update")
 
@@ -380,7 +384,11 @@ class KoiForCausalLM(nn.Module, HasInnerState, IsHybrid):
         if config.tie_word_embeddings:
             self.lm_head = self.lm_head.tie_weights(self.model.embed_tokens)
         self.logits_processor = LogitsProcessor(config.vocab_size)
-        if getattr(config, "koi_mixed", None):
+        if getattr(config, "koi_quantization", None):
+            from .koi_quantization import install_packed_weights
+
+            install_packed_weights(self, vllm_config)
+        elif getattr(config, "koi_mixed", None):
             from .koi_mixed import install_packed_weights
 
             install_packed_weights(self, vllm_config)
@@ -434,6 +442,10 @@ class KoiForCausalLM(nn.Module, HasInnerState, IsHybrid):
         return MambaStateCopyFuncCalculator.gated_delta_net_state_copy_func()
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        if getattr(self.config, "koi_quantization", None):
+            from .koi_quantization import load_packed_weights
+
+            return load_packed_weights(self, weights)
         if getattr(self.config, "koi_mixed", None):
             from .koi_mixed import load_packed_weights
 
