@@ -105,7 +105,7 @@ def test_packed_linear(fmt, n, k, batch):
     from torch import nn
     from torch.nn import functional as F
 
-    from vllm.model_executor.models.koi_packed import install_packed_linear
+    from vllm.model_executor.models.koi import install_packed_linear
 
     generator = torch.Generator(device="cuda").manual_seed(2341)
     layer = nn.Linear(k, n, device="cuda", dtype=torch.bfloat16)
@@ -159,7 +159,7 @@ def test_packed_linear(fmt, n, k, batch):
 
 @pytest.mark.parametrize("default", ["BF16", "MXFP8", "NVFP4"])
 def test_per_matrix_formats(default):
-    from vllm.model_executor.models.koi_quantization import resolve_formats
+    from vllm.model_executor.models.koi import resolve_formats
 
     matrices = {"projection.weight", "lm_head.weight", "ffn.weight"}
     names = matrices | {"projection.bias", "model.embed_tokens.weight"}
@@ -191,7 +191,7 @@ def test_per_matrix_formats(default):
     ],
 )
 def test_per_matrix_formats_reject_invalid(allocation, match):
-    from vllm.model_executor.models.koi_quantization import resolve_formats
+    from vllm.model_executor.models.koi import resolve_formats
 
     with pytest.raises(ValueError, match=match):
         resolve_formats(
